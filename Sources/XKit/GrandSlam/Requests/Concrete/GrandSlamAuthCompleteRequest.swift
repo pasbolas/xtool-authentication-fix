@@ -16,12 +16,14 @@ struct GrandSlamAuthCompleteRequest: GrandSlamOperationRequest {
         let encryptedResponse: Data
         let negProto: Data
         let sc: Data?
+        let status: GrandSlamOperationResponseStatusWrapper.Status?
 
         private enum CodingKeys: String, CodingKey {
             case hamk = "M2"
             case encryptedResponse = "spd"
             case negProto = "np"
             case sc
+            case status = "Status"
         }
     }
 

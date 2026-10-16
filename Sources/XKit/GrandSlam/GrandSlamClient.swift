@@ -22,9 +22,21 @@ struct GrandSlamClient: Sendable {
     init() {}
 
     func send<R: GrandSlamRequest>(_ request: R) async throws -> R.Decoder.Value {
+        do {
+            return try await send(request, anisetteData: anisetteDataProvider.fetchAnisetteData())
+        } catch let error as GrandSlamAnisetteResyncRequired {
+            // GSA wants our ADI state resynced; do that and retry once with the corrected data.
+            let anisetteData = try await anisetteDataProvider.resync(sim: error.sim)
+            return try await send(request, anisetteData: anisetteData)
+        }
+    }
+
+    private func send<R: GrandSlamRequest>(
+        _ request: R,
+        anisetteData: AnisetteData
+    ) async throws -> R.Decoder.Value {
         let deviceInfo = try deviceInfoProvider.fetch()
 
-        let anisetteData = try await anisetteDataProvider.fetchAnisetteData()
         let url = try await lookupManager.fetchURL(forEndpoint: R.endpoint)
 
         let method = request.method(deviceInfo: deviceInfo, anisetteData: anisetteData)

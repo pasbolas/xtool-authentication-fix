@@ -34,7 +34,7 @@ struct GrandSlamAuthenticateOperation {
     }
 
     private struct Response: Decodable {
-        let statusCode: Int
+        let statusCode: Int?
         let url: String?
 
         private enum CodingKeys: String, CodingKey {
@@ -106,10 +106,15 @@ struct GrandSlamAuthenticateOperation {
 
         let loginData = try decoder.decode(GrandSlamLoginData.self, from: rawLoginResponse)
 
-        if response.statusCode == 409 {
+        // GSA may also signal 2FA via the unencrypted Status: `au` names the 2FA mode, and
+        // `hsc` 409 without a mode means a code was already sent, so we just prompt for it.
+        let status = completeResponse.status
+        let statusAuthMode = status?.authMode.flatMap { GrandSlamAuthMode(rawValue: $0) }
+        let statusNeedsTwoFactor = !isRetry && (statusAuthMode != nil || status?.httpStatusCode == 409)
+        if response.statusCode == 409 || statusNeedsTwoFactor {
             // 2FA
             guard !isRetry else { throw Error.failedSecondaryAuth }
-            let authMode = response.url.flatMap { GrandSlamAuthMode(rawValue: $0) }
+            let authMode = response.url.flatMap { GrandSlamAuthMode(rawValue: $0) } ?? statusAuthMode
             return try await authenticateTwoFactor(
                 mode: authMode,
                 loginData: loginData

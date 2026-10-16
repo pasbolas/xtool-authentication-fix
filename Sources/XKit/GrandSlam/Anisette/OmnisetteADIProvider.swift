@@ -7,9 +7,10 @@ struct OmnisetteADIProvider: RawADIProvider {
     // should implement v3 of https://github.com/SideStore/omnisette-server
     // list: https://servers.sidestore.io/servers.json
     // e.g. https://ani.sidestore.io
+    // The default must support resyncing (`sim` in /v3/get_headers), like iloader's default.
     private let url: URL
     init(
-        url: URL = URL(string: "https://ani.sidestore.io")! // URL(string: "http://localhost:6969")!
+        url: URL = URL(string: "https://ani.stikstore.app")! // URL(string: "http://localhost:6969")!
     ) {
         self.url = url
     }
@@ -45,9 +46,51 @@ struct OmnisetteADIProvider: RawADIProvider {
         routingInfo: inout UInt64,
         provisioningInfo: Data
     ) async throws -> (machineID: Data, otp: Data) {
+        try await getHeaders(
+            userID: userID,
+            routingInfo: &routingInfo,
+            provisioningInfo: provisioningInfo,
+            resync: nil
+        )
+    }
+
+    func synchronize(
+        sim: Data,
+        userID: UUID,
+        localUserID: String,
+        routingInfo: inout UInt64,
+        provisioningInfo: Data
+    ) async throws -> (machineID: Data, otp: Data)? {
+        try await getHeaders(
+            userID: userID,
+            routingInfo: &routingInfo,
+            provisioningInfo: provisioningInfo,
+            resync: Resync(
+                sim: sim.base64EncodedString(),
+                deviceId: userID.uuidString,
+                mdLu: localUserID
+            )
+        )
+    }
+
+    private struct Resync: Encodable {
+        let sim: String
+        let deviceId: String
+        let mdLu: String
+    }
+
+    private func getHeaders(
+        userID: UUID,
+        routingInfo: inout UInt64,
+        provisioningInfo: Data,
+        resync: Resync?
+    ) async throws -> (machineID: Data, otp: Data) {
         struct Request: Encodable {
             let identifier: Data
             let adiPb: Data
+            let sim: String?
+            let deviceId: String?
+            let mdLu: String?
         }
 
         struct Response: Decodable {
@@ -67,7 +110,10 @@ struct OmnisetteADIProvider: RawADIProvider {
         request.headerFields[.contentType] = "application/json"
         let body = try Self.encoder.encode(Request(
             identifier: userID.rawBytes,
-            adiPb: provisioningInfo
+            adiPb: provisioningInfo,
+            sim: resync?.sim,
+            deviceId: resync?.deviceId,
+            mdLu: resync?.mdLu
         ))
         let response = try await client.makeRequest(request, body: body).body
         let decoded = try Self.decoder.decode(Response.self, from: response)

@@ -16,12 +16,34 @@ public protocol RawADIProvider: Sendable {
         routingInfo: inout UInt64,
         provisioningInfo: Data
     ) async throws -> (machineID: Data, otp: Data)
+
+    /// Resynchronizes ADI with the server intermediate metadata (`sim`) that GSA sends
+    /// back with `hsc` 434, returning fresh OTP data.
+    ///
+    /// Returns `nil` if the provider can't resync, in which case the caller re-provisions.
+    func synchronize(
+        sim: Data,
+        userID: UUID,
+        localUserID: String,
+        routingInfo: inout UInt64,
+        provisioningInfo: Data
+    ) async throws -> (machineID: Data, otp: Data)?
 }
 
 extension RawADIProvider {
     public func clientInfo() async throws -> String {
         // Must match the client info used for GSA auth, since the ADI data is Android-generated.
         DeviceInfo.ClientInfo.androidClientString
+    }
+
+    public func synchronize(
+        sim: Data,
+        userID: UUID,
+        localUserID: String,
+        routingInfo: inout UInt64,
+        provisioningInfo: Data
+    ) async throws -> (machineID: Data, otp: Data)? {
+        nil
     }
 }
 
@@ -231,7 +253,11 @@ public struct ADIDataProvider: AnisetteDataProvider {
             routingInfo: &routingInfo,
             provisioningInfo: provisioningInfo
         )
-        return AnisetteData(
+        return anisetteData(requestTime: requestTime, routingInfo: routingInfo, mid: mid, otp: otp)
+    }
+
+    private func anisetteData(requestTime: Date, routingInfo: UInt64, mid: Data, otp: Data) -> AnisetteData {
+        AnisetteData(
             clientTime: requestTime,
             routingInfo: routingInfo,
             machineID: mid.base64EncodedString(),
@@ -283,6 +309,34 @@ public struct ADIDataProvider: AnisetteDataProvider {
             routingInfo: rinfo,
             provisioningInfo: data
         )
+    }
+
+    public func resync(sim: Data) async throws -> AnisetteData {
+        if let provisioningInfo = try storage.data(forKey: Self.provisioningKey),
+           let routingInfoString = try storage.string(forKey: Self.routingInfoKey),
+           var routingInfo = UInt64(routingInfoString) {
+            let requestTime = Date()
+            if let synced = try await rawProvider.synchronize(
+                sim: sim,
+                userID: localUserUID,
+                localUserID: localUserID,
+                routingInfo: &routingInfo,
+                provisioningInfo: provisioningInfo
+            ) {
+                // persist so later fetches don't reuse the stale routing info and hit 434 again
+                try storage.setString("\(routingInfo)", forKey: Self.routingInfoKey)
+                return anisetteData(
+                    requestTime: requestTime,
+                    routingInfo: routingInfo,
+                    mid: synced.machineID,
+                    otp: synced.otp
+                )
+            }
+        }
+
+        // The provider can't resync in place, so start over with a freshly provisioned machine.
+        await resetProvisioning()
+        return try await fetchAnisetteData()
     }
 
 }

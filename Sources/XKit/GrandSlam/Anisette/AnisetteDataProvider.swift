@@ -23,6 +23,12 @@ public protocol AnisetteDataProvider: Sendable {
     func provisioningData() -> ProvisioningData?
 
     func fetchAnisetteData() async throws -> AnisetteData
+
+    /// Called when GSA asks for an Anisette resync (`hsc` 434), passing the server
+    /// intermediate metadata it sent (`X-Apple-I-MD-DATA`). Returns corrected data.
+    ///
+    /// The default implementation resets provisioning and fetches fresh data.
+    func resync(sim: Data) async throws -> AnisetteData
 }
 
 public struct ProvisioningData: Hashable, Codable, Sendable {
@@ -35,6 +41,11 @@ extension AnisetteDataProvider {
     public var providerID: String? { nil }
     public func provisioningData() -> ProvisioningData? { nil }
     public func resetProvisioning() async {}
+
+    public func resync(sim: Data) async throws -> AnisetteData {
+        await resetProvisioning()
+        return try await fetchAnisetteData()
+    }
 }
 
 extension DependencyValues {
